@@ -208,7 +208,7 @@ func main() {
 			if !*displayEmojis {
 				emojiChar := convertCodePointToEmoji(emoji.CodePoint)
 				uid := generateUID()
-				fileName := filepath.Join("build", fmt.Sprintf("%s [%s].json", emoji.Description, uid))
+				fileName := filepath.Join("", fmt.Sprintf("%s [%s].json", emoji.Description, uid))
 				err := generateAlfredSnippetJSON(*emoji, emojiChar, uid, fileName)
 				if err != nil {
 					fmt.Printf("Error generating JSON for %v: %v\n", emoji.Description, err)
@@ -220,7 +220,7 @@ func main() {
 	}
 
 	if !*displayEmojis {
-		plistFileName := filepath.Join("build", "info.plist")
+		plistFileName := filepath.Join("", "info.plist")
 		err = generateInfoPlist(plistFileName)
 		if err != nil {
 			fmt.Printf("Error generating info.plist: %v\n", err)
@@ -237,7 +237,7 @@ func main() {
 			fmt.Printf("Error creating .alfredsnippets file: %v\n", err)
 		} else {
 			fmt.Println("EmojiPack.alfredsnippets file created successfully.")
-			os.RemoveAll("build") // Clean up build directory
+			os.Remove("*.json") // Clean up build directory
 		}
 	}
 }
