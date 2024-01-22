@@ -1,18 +1,37 @@
 package main
 
 import (
+	"archive/zip"
 	"bufio"
+	"encoding/json"
 	"flag"
 	"fmt"
+	"io"
+	"io/ioutil"
 	"net/http"
+	"os"
+	"path/filepath"
+
 	"strconv"
 	"strings"
+
+	"github.com/google/uuid"
 )
 
 // EmojiData represents a parsed emoji entry.
 type EmojiData struct {
 	CodePoint   string
 	Description string
+}
+
+// AlfredSnippet represents the structure of an Alfred snippet JSON file.
+type AlfredSnippet struct {
+	AlfredSnippet struct {
+		Snippet string `json:"snippet"`
+		UID     string `json:"uid"`
+		Name    string `json:"name"`
+		Keyword string `json:"keyword"`
+	} `json:"alfredsnippet"`
 }
 
 var displayEmojis = flag.Bool("emojis", false, "Display actual emojis instead of code points")
@@ -79,7 +98,99 @@ func convertCodePointToEmoji(codePointStr string) string {
 	return string(emojiRunes)
 }
 
+// generateAlfredSnippetJSON creates a JSON file for an Alfred snippet.
+func generateAlfredSnippetJSON(emoji EmojiData, emojiChar string, uid string, filePath string) error {
+	snippet := AlfredSnippet{}
+	snippet.AlfredSnippet.Snippet = emojiChar
+	snippet.AlfredSnippet.UID = uid
+	snippet.AlfredSnippet.Name = emoji.Description
+	snippet.AlfredSnippet.Keyword = strings.ReplaceAll(emoji.Description, " ", "-")
+
+	jsonData, err := json.Marshal(snippet)
+	if err != nil {
+		return err
+	}
+
+	return ioutil.WriteFile(filePath, jsonData, 0644)
+}
+
+// generateUID generates a unique identifier.
+func generateUID() string {
+	return strings.ToUpper(uuid.New().String())
+}
+
+// generateInfoPlist creates the info.plist file for the Alfred snippet pack.
+func generateInfoPlist(filePath string) error {
+	plistContent := `<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>snippetkeywordprefix</key>
+    <string>:</string>
+    <key>snippetkeywordsuffix</key>
+    <string></string>
+</dict>
+</plist>`
+
+	return ioutil.WriteFile(filePath, []byte(plistContent), 0644)
+}
+
+// zipFiles creates a .zip file from a list of files.
+func zipFiles(zipFileName string, files []string) error {
+	newZipFile, err := os.Create(zipFileName)
+	if err != nil {
+		return err
+	}
+	defer newZipFile.Close()
+
+	zipWriter := zip.NewWriter(newZipFile)
+	defer zipWriter.Close()
+
+	for _, file := range files {
+		err = addFileToZip(zipWriter, file)
+		if err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+// addFileToZip adds a single file to the zip archive.
+func addFileToZip(zipWriter *zip.Writer, fileName string) error {
+	fileToZip, err := os.Open(fileName)
+	if err != nil {
+		return err
+	}
+	defer fileToZip.Close()
+
+	// Get the file information
+	info, err := fileToZip.Stat()
+	if err != nil {
+		return err
+	}
+
+	header, err := zip.FileInfoHeader(info)
+	if err != nil {
+		return err
+	}
+
+	header.Name = fileName
+	header.Method = zip.Deflate
+
+	writer, err := zipWriter.CreateHeader(header)
+	if err != nil {
+		return err
+	}
+	_, err = io.Copy(writer, fileToZip)
+	return err
+}
+
 func main() {
+	// Create build and dist directories
+	os.Mkdir("build", 0755)
+	os.Mkdir("dist", 0755)
+
 	flag.Parse()
 
 	url := "https://unicode.org/Public/emoji/15.1/emoji-sequences.txt"
@@ -89,15 +200,44 @@ func main() {
 		return
 	}
 
+	var filesToZip []string // To keep track of all files to be zipped
+
 	for _, line := range lines {
 		emojiData := parseEmojiLine(line)
 		for _, emoji := range emojiData {
-			display := emoji.CodePoint
-			if *displayEmojis {
-				display = convertCodePointToEmoji(emoji.CodePoint)
+			if !*displayEmojis {
+				emojiChar := convertCodePointToEmoji(emoji.CodePoint)
+				uid := generateUID()
+				fileName := filepath.Join("build", fmt.Sprintf("%s [%s].json", emoji.Description, uid))
+				err := generateAlfredSnippetJSON(*emoji, emojiChar, uid, fileName)
+				if err != nil {
+					fmt.Printf("Error generating JSON for %v: %v\n", emoji.Description, err)
+				} else {
+					filesToZip = append(filesToZip, fileName)
+				}
 			}
-			fmt.Printf("Emoji: %v, Description: %s\n", display, emoji.Description)
+		}
+	}
+
+	if !*displayEmojis {
+		plistFileName := filepath.Join("build", "info.plist")
+		err = generateInfoPlist(plistFileName)
+		if err != nil {
+			fmt.Printf("Error generating info.plist: %v\n", err)
+		} else {
+			filesToZip = append(filesToZip, plistFileName)
+		}
+
+		iconFileName := "icon.png"
+		filesToZip = append(filesToZip, iconFileName)
+
+		zipFileName := filepath.Join("dist", "EmojiPack.alfredsnippets")
+		err = zipFiles(zipFileName, filesToZip)
+		if err != nil {
+			fmt.Printf("Error creating .alfredsnippets file: %v\n", err)
+		} else {
+			fmt.Println("EmojiPack.alfredsnippets file created successfully.")
+			os.RemoveAll("build") // Clean up build directory
 		}
 	}
 }
-
